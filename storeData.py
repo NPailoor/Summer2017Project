@@ -24,11 +24,6 @@ def findData(event):
 	tag = str(dateTime) + str(int(location))
 	print tag
 	VLFData = [];
-	conn.execute("INSERT INTO LIGHTNINGTABLE (TAG,DATE,TIME,LAT,LONG,PEAK) \
-		VALUES (" + str(tag) + "," + str(date) + "," + str(dateTime)+ "," + str(info[7]) + "," \
-		+ str(info[8]) + "," + str(info[9]) + ")");
-	conn.commit()
-	print "Records created successfully";
 	for i in range(0, sites.size):
 		filePath = ('geniza/NarrowbandFull/' + sites[i][0][0] + '/' + str(int(year)) + '_' + str(int(month)).zfill(2)
 		+ '_' + str(int(day)) + '/' + tags[i][0][0] +  transmitters[i][0][0] + '_000A.mat')
@@ -36,12 +31,12 @@ def findData(event):
 		fullData = scipy.io.loadmat(filePath, variable_names='data')
 		fullData = fullData['data']
 		dataRow = fullData[start:end]
+		print str(dataRow)
 		if not math.isnan(dataRow[0]):
-			a = array.array('B',fullData)
-			amp = a.tostring()
-			conn.execute("INSERT INTO DATATABLE (AMP,REC,TRAN,DATE,TAG) \
-				VALUES (" + amp + "," + sites[i][0][0] + "," + transmitters[i][0][0] \
-				+ "," + date + "," + tag +")");
+			conn.execute("INSERT INTO DATATABLE (AMP,REC,TRAN,DATE,TAG,TIME,LAT,LONG,PEAK) \
+				VALUES (" + str(dataRow) + "," + str(sites[i][0][0]) + "," + str(transmitters[i][0][0]) \
+				+ "," + str(date) + "," + str(tag) + "," + str(time) + "," + \
+				str(info[7]) + "," + str(info[8]) + "," + str(info[9]) +")");
 			conn.commit()
 			print "Records created successfully";
 
@@ -54,8 +49,10 @@ def createTables():
 		(AMP BLOB NOT NULL,
 		REC TEXT NOT NULL,
 		TRAN TEXT NOT NULL,
-		DATE INT PRIMARY KEY NOT NULL,
-		TAG TEXT NOT NULL);''')
+		DATETIME INT PRIMARY KEY NOT NULL,
+		TAG TEXT NOT NULL
+		LAT REAL NOT NULL
+		LONG REAL NOT NULL);''')
 	print "Table created successfully";
 
 	conn.execute('''CREATE TABLE LIGHTNINGTABLE
