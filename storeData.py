@@ -5,9 +5,8 @@ def findData(event):
 	import scipy.io
 	import sqlite3
 	import math
-	import array
 	import numpy
-	import pickle
+	import os.path
 	conn = sqlite3.connect('test.db')
 	info = event['LightningInfo']
 	info = info[0]
@@ -26,37 +25,50 @@ def findData(event):
 	location = abs(info[8]*10000*1000000) + abs(info[7]*10000);
 	VLFData = [];
 	for i in range(0, sites.size):
-		filePath = ('geniza/NarrowbandFull/' + sites[i][0][0] + '/' + str(int(year)) + '_' + str(int(month)).zfill(2)
-		+ '_' + str(int(day)) + '/' + tags[i][0][0] +  transmitters[i][0][0] + '_000A.mat')
-		print filePath
-		fullData = scipy.io.loadmat(filePath, variable_names='data')
-		fullData = fullData['data']
-		#Unique identifying tags
-		primeKey = str(int(location)) + str(dateTime) + str(sites[i][0][0]) + str(transmitters[i][0][0])
-		#Matlab is causing this list to be structured as a list of single-element lists
-		#Needs to be reformatted
-		dataSample = fullData[start:end]
-		dataRow = []
-		#Some datasets contain null elements, if this is the case ignore them
-		dataIsReal = True
-		dataString = ""
-		delim = '-'
-		for j in range(0, dataSample.size):
-			if numpy.isnan(dataSample[j]):
-				dataIsReal = False
-			dataString = dataString + str(dataSample[j][0]) + delim
-		print "INSERT INTO DATATABLE (AMP,REC,TRAN,DATE,TIME,LAT,LONG,PEAK,TAG) \
-			VALUES ('" + dataString + "','" + str(sites[i][0][0]) + "','" + str(transmitters[i][0][0]) \
-			+ "','" + str(date) + "'," + str(time) + "," + \
-			str(info[7]) + "," + str(info[8]) + "," + str(info[9]) + ",'" + primeKey + "')"
-		if dataIsReal:
-			conn.execute("INSERT INTO DATATABLE (AMP,REC,TRAN,DATE,TIME,LAT,LONG,PEAK, TAG) \
-				VALUES ('" + dataString + "','" + str(sites[i][0][0]) + "','" + str(transmitters[i][0][0]) \
-				+ "','" + str(date) + "'," + str(time) + "," + \
-				str(info[7]) + "," + str(info[8]) + "," + str(info[9]) + ",'" + primeKey + "')");
-			conn.commit()
-			print "Records created successfully";
+                #FilePath can end in 0 or 1
+                for k in range(0,2):
+                        filePath = ('/home/nikhil/Desktop/geniza/NarrowbandFull/' + sites[i][0][0] + '/' + str(int(year)) + '_' + str(int(month)).zfill(2) + '_' + str(int(day)) + '/' + tags[i][0][0] +  transmitters[i][0][0] + '_00' + str(k) + 'A.mat')
+                        if os.path.isfile(filePath):
+                                if (k == 0):
+                                        dir = 'NS'
+                                else:
+                                        dir = 'EW'
+                                fullData = scipy.io.loadmat(filePath, variable_names='data')
+                                fullData = fullData['data']
+                                #Unique identifying tags
+                                primeKey = str(int(location)) + str(dateTime) + str(sites[i][0][0]) + str(transmitters[i][0][0]) + dir
+                                #Matlab is causing this list to be structured as a list of single-element lists
+                                #Needs to be reformatted
+                                dataSample = fullData[start:end]
+                                dataRow = []
+                                #Some datasets contain null elements, if this is the case ignore them
+                                dataIsReal = True
+                                dataString = ""
+                                delim = '-'
+                                for j in range(0, dataSample.size):
+                                        if numpy.isnan(dataSample[j]):
+                                                dataIsReal = False
+                                        dataString = dataString + str(dataSample[j][0]) + delim
+                                print "INSERT INTO DATATABLE (AMP,REC,TRAN,DATE,TIME,LAT,LONG,PEAK,TAG,DIR) \
+                                        VALUES ('" + dataString + "','" + str(sites[i][0][0]) + "','" + str(transmitters[i][0][0]) \
+                                        + "','" + str(date) + "'," + str(time) + "," + \
+                                        str(info[7]) + "," + str(info[8]) + "," + str(info[9]) + ",'" + primeKey + "','" + dir + "')"
+                                if dataIsReal:
+                                        conn.execute("INSERT INTO DATATABLE (AMP,REC,TRAN,DATE,TIME,LAT,LONG,PEAK, TAG,DIR) \
+                                                VALUES ('" + dataString + "','" + str(sites[i][0][0]) + "','" + str(transmitters[i][0][0]) \
+                                                + "','" + str(date) + "'," + str(time) + "," + \
+                                                     str(info[7]) + "," + str(info[8]) + "," + str(info[9]) + ",'" + primeKey + "','" + dir +"')");
+                                        conn.commit()
+                                        print "Records created successfully";
 
+def lightningScan():
+        import os
+        import scipy.io
+        filePath = '/home/nikhil/Desktop/geniza/Morris/EventsEF';
+        for dirname in os.listdir(filePath):
+                event = scipy.io.loadmat(filePath + '/' + dirname + '/' + filename);
+                findData(event)
+                        
 def createTables():
 	import sqlite3
 	conn = sqlite3.connect('test.db')
