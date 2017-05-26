@@ -27,7 +27,7 @@ def findData(event):
 	for i in range(0, sites.size):
                 #FilePath can end in 0 or 1
                 for k in range(0,2):
-                        filePath = ('/home/nikhil/Desktop/geniza/NarrowbandFull/' + sites[i][0][0] + '/' + str(int(year)) + '_' + str(int(month)).zfill(2) + '_' + str(int(day)) + '/' + tags[i][0][0] +  transmitters[i][0][0] + '_00' + str(k) + 'A.mat')
+                        filePath = ('/home/nikhil/Desktop/geniza/NarrowbandFull/' + sites[i][0][0] + '/' + str(int(year)) + '_' + str(int(month)).zfill(2) + '_' + str(int(day)).zfill(2) + '/' + tags[i][0][0] +  transmitters[i][0][0] + '_00' + str(k) + 'A.mat')
                         if os.path.isfile(filePath):
                                 if (k == 0):
                                         dir = 'NS'
@@ -45,6 +45,7 @@ def findData(event):
                                 dataIsReal = True
                                 dataString = ""
                                 delim = '-'
+                                #Converting to string
                                 for j in range(0, dataSample.size):
                                         if numpy.isnan(dataSample[j]):
                                                 dataIsReal = False
@@ -59,15 +60,21 @@ def findData(event):
                                                 + "','" + str(date) + "'," + str(time) + "," + \
                                                      str(info[7]) + "," + str(info[8]) + "," + str(info[9]) + ",'" + primeKey + "','" + dir +"')");
                                         conn.commit()
-                                        print "Records created successfully";
+                                        print "Records created successfully"
+                                else:
+                                        print "Bad data"
+                        else:
+                                print filePath
+                                print "File Does Not Exist"
 
 def lightningScan():
         import os
         import scipy.io
-        filePath = '/home/nikhil/Desktop/geniza/Morris/EventsEF';
+        filePath = '/home/nikhil/Desktop/geniza/Morris/EventsEF'
         for dirname in os.listdir(filePath):
-                event = scipy.io.loadmat(filePath + '/' + dirname + '/' + filename);
-                findData(event)
+                for filename in os.listdir(filePath + '/' + dirname):
+                        event = scipy.io.loadmat(filePath + '/' + dirname + '/' + filename)
+                        findData(event)
                         
 def createTables():
 	import sqlite3
