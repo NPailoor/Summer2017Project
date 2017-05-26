@@ -24,7 +24,19 @@ def parseAmp(ampString):
     return ampData
 
 def medianAmp(ampLog):
-    
-    
+    import numpy as np
+    from scipy import signal
+    from matplotlib import pyplot as p
+    timeRange = list(range(-40,120))
+    ampArray = np.asarray(ampLog)
+    ampMedian = signal.medfilt(ampArray, 5)
+    p.subplot(211)
+    p.plot(timeRange, ampLog)
+    p.axis([-40, 120, 1.25, 1.5])
+    p.subplot(212)
+    p.plot(timeRange,ampMedian)
+    p.axis([-40, 120, 1.25, 1.5])
+    p.show()
+    return ampMedian
 
     
