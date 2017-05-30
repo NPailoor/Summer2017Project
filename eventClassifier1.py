@@ -2,7 +2,7 @@ import urllib2
 import numpy as np
 from matplotlib import pyplot
 from StringIO import StringIO
-from caffe2.python import core, utils, workspace, model_helper, brew
+from caffe2.python import core, utils, workspace, model_helper, brew, net_drawer
 from caffe2.proto import caffe2_pb2
 import scipy.io
 
@@ -12,16 +12,18 @@ trainingLabels = scipy.io.loadmat('trainingLabels.mat')
 features = trainingData['sortedmedianTable']
 # load the labels to a feature matrix
 labels = np.reshape(trainingLabels['sortedClassifierOutput'],444)
+labels = labels.astype(int)
 
 random_index = np.random.permutation(444)
 features = features[random_index]
 labels = labels[random_index]
 
 train_features = features[:350]
+train_features = train_features.reshape(350,1,1,161)
 train_labels = labels[:350]
 test_features = features[350:]
+test_features = test_features.reshape(94,1,1,161)
 test_labels = labels[350:]
-
 
 def write_db(db_type, db_name, features, labels):
     db = core.C.create_db(db_type, db_name, core.C.Mode.write)
@@ -37,8 +39,8 @@ def write_db(db_type, db_name, features, labels):
     # Close the transaction, and then close the db.
     del transaction
     del db
-#write_db("minidb", "event_train1.minidb", train_features, train_labels)
-#write_db("minidb", "event_test1.minidb", test_features, test_labels)
+write_db("minidb", "event_train1.minidb", train_features, train_labels)
+write_db("minidb", "event_test1.minidb", test_features, test_labels)
 
 def AddTrainingOperators(model, softmax, label):
     # something very important happens here
@@ -50,7 +52,7 @@ def AddTrainingOperators(model, softmax, label):
     # use the average loss we just computed to add gradient operators to the model
     model.AddGradientOperators([loss])
     # do a simple stochastic gradient descent
-    ITER = model.Iter("iter")
+    ITER = brew.iter(model, "iter")
     # set the learning rate schedule
     LR = model.LearningRate(
         ITER, "LR", base_lr=-0.1, policy="step", stepsize=1, gamma=0.999 )
@@ -66,8 +68,8 @@ def AddTrainingOperators(model, softmax, label):
         model.WeightedSum([param, ONE, param_grad, LR], param)
     # let's checkpoint every 20 iterations, which should probably be fine.
     # you may need to delete tutorial_files/tutorial-mnist to re-run the tutorial
-    model.Checkpoint([ITER] + model.params, [],
-                   db="testModel_checkpoint_%05d.leveldb",db_type="leveldb", every=20)
+    #model.Checkpoint([ITER] + model.params, [],
+    #               db="event_testModel_checkpoint_%05d.leveldb", db_type="leveldb", every=20)
 
 def AddBookkeepingOperators(model):
     # Print basically prints out the content of the blob. to_file=1 routes the
@@ -87,9 +89,33 @@ def AddBookkeepingOperators(model):
     # gradients.
 
 def addModel(model, data):
-    conv1 = brew.conv(model, data, 'conv1', dim_in=1, dim_out=2, kernel=[5,1])
-    pool1 = max_pool(model, conv1, 'pool1', kernel_h=1, kernel_w=2, stride=2)
-    fc3 = brew.fc(model, pool2, 'fc3', dim_in=2*78, dim_out=100)
+    channels = 1
+    if model.init_params:
+        weight = model.param_init_net.GaussianFill(
+            [],
+            'conv1' + '_w',
+            shape=[channels,1,1,5]
+        )
+        print("initial_conv1_w: " + str(workspace.FetchBlob('conv1_w')))
+        bias = model.param_init_net.ConstantFill(
+            [],
+            'conv1' + '_b',
+            shape=[channels, ]
+        )
+    else:
+        weight = core.ScopedBlobReference(
+            'conv1' + '_w', model.param_init_net)
+        bias = core.ScopedBlobReference(
+            'conv1' + '_b', model.param_init_net)
+
+    model.params.extend([weight, bias])
+    model.weights.append(weight)
+    model.biases.append(bias)
+
+    conv1 = model.net.Conv([data, weight, bias], 'conv1', dim_in=1, dim_out=channels, kernel_h=1, kernel_w=5)
+    #conv1 = brew.conv(model, data, 'conv1', 1, 2, 5)
+    #pool1 = brew.max_pool(model, conv1, 'pool1', kernel_h=1, kernel_w=2, stride=2)
+    fc3 = brew.fc(model, conv1, 'fc3', dim_in=channels*157, dim_out=100)
     fc3 = brew.relu(model, fc3, fc3)
     pred = brew.fc(model, fc3, 'pred', 100, 10)
     softmax = brew.softmax(model, pred, 'softmax')
@@ -101,22 +127,27 @@ def AddAccuracy(model, softmax, label):
 
 arg_scope = {"order": "NCHW"}
 train_model = model_helper.ModelHelper(name="event_train", arg_scope=arg_scope)
-softmax = addModel(train_model, train_features)
+train_data, train_labels = train_model.TensorProtosDBInput(
+    [], ["data_float", "label"], batch_size=350, db='event_train1.minidb', db_type='minidb')
+workspace.FeedBlob("TD",train_features.astype(np.float32))
+softmax = addModel(train_model, "TD")
 AddTrainingOperators(train_model, softmax, train_labels)
-AddBookkeepingOperations(train_model)
+AddBookkeepingOperators(train_model)
 
 test_model = model_helper.ModelHelper(
     name="event_test", arg_scope=arg_scope, init_params=False)
+test_features, test_labels = train_model.TensorProtosDBInput(
+    [], ["data_float", "label"], batch_size=94, db='event_test1.minidb', db_type='minidb')
 softmax = addModel(test_model, test_features)
 AddAccuracy(test_model, softmax, test_labels)
 
-from IPython import display
-graph = net_drawer.GetPydotGraph(train_model.net.Proto().op, "events", rankdir="LR")
-display.Image(graph.create_png(), width=800)
+#from IPython import display
+#graph = net_drawer.GetPydotGraph(train_model.net.Proto().op, name="events", rankdir="LR")
+#display.Image(graph.create_png(), width=800)
 
 workspace.RunNetOnce(train_model.param_init_net)
 
-workspace.CreateNet(train_model.net)
+workspace.CreateNet(train_model.net, overwrite=True)
 
 total_iters = 200
 accuracy = np.zeros(total_iters)
@@ -126,19 +157,10 @@ for i in range(total_iters):
     workspace.RunNet(train_model.net.Proto().name)
     accuracy[i] = workspace.FetchBlob('accuracy')
     loss[i] = workspace.FetchBlob('loss')
-
-workspace.RunNetOnce(train_model.param_init_net)
-workspace.CreateNet(train_model.net)
-
-total_iters = 200
-accuracy = np.zeros(total_iters)
-loss = np.zeros(total_iters)
-
-for i in range(total_iters):
-    workspace.RunNet(train_model.net.Proto().name)
-    accuracy[i] = workspace.FetchBlob('accuracy')
-    loss[i] = workspace.FetchBlob('loss')
+    print("Conv_w: " + str(workspace.FetchBlob('conv1_w')))
+    print("Conv_b: " + str(workspace.FetchBlob('conv1_b')))
 pyplot.plot(loss, 'b')
 pyplot.plot(accuracy, 'r')
 pyplot.legend(('loss', 'Accuracy'), loc='upper right')
+
 pyplot.show()
