@@ -6,6 +6,7 @@ from caffe2.python import core, utils, workspace, model_helper, brew, net_drawer
 from caffe2.proto import caffe2_pb2
 import scipy.io
 
+workspace.ResetWorkspace()
 trainingData = scipy.io.loadmat('trainingData.mat')
 trainingLabels = scipy.io.loadmat('trainingLabels.mat')
 # load the features to a feature matrix.
@@ -13,16 +14,20 @@ features = trainingData['sortedmedianTable']
 # load the labels to a feature matrix
 labels = np.reshape(trainingLabels['sortedClassifierOutput'],444)
 labels = labels.astype(int)
+features = np.delete(features, [141, 363], axis=0)
+labels = np.delete(labels, [141, 363])
 
-random_index = np.random.permutation(444)
+random_index = np.random.permutation(442)
 features = features[random_index]
 labels = labels[random_index]
+max = np.amax(features)
+features = features/max
 
 train_features = features[:350]
-train_features = train_features.reshape(350,1,1,161)
+#train_features = train_features.reshape(350,1,1,161)
 train_labels = labels[:350]
 test_features = features[350:]
-test_features = test_features.reshape(94,1,1,161)
+#test_features = test_features.reshape(94,1,1,161)
 test_labels = labels[350:]
 
 def write_db(db_type, db_name, features, labels):
@@ -39,6 +44,7 @@ def write_db(db_type, db_name, features, labels):
     # Close the transaction, and then close the db.
     del transaction
     del db
+
 write_db("minidb", "event_train1.minidb", train_features, train_labels)
 write_db("minidb", "event_test1.minidb", test_features, test_labels)
 
@@ -64,6 +70,8 @@ def AddTrainingOperators(model, softmax, label):
         # Note how we get the gradient of each parameter - ModelHelper keeps
         # track of that.
         param_grad = model.param_to_grad[param]
+        #print(param)
+        #print(workspace.FetchBlob(param))
         # The update is a simple weighted sum: param = param + param_grad * LR
         model.WeightedSum([param, ONE, param_grad, LR], param)
     # let's checkpoint every 20 iterations, which should probably be fine.
@@ -89,35 +97,36 @@ def AddBookkeepingOperators(model):
     # gradients.
 
 def addModel(model, data):
-    channels = 1
-    if model.init_params:
-        weight = model.param_init_net.GaussianFill(
-            [],
-            'conv1' + '_w',
-            shape=[channels,1,1,5]
-        )
-        print("initial_conv1_w: " + str(workspace.FetchBlob('conv1_w')))
-        bias = model.param_init_net.ConstantFill(
-            [],
-            'conv1' + '_b',
-            shape=[channels, ]
-        )
-    else:
-        weight = core.ScopedBlobReference(
-            'conv1' + '_w', model.param_init_net)
-        bias = core.ScopedBlobReference(
-            'conv1' + '_b', model.param_init_net)
+    #channels = 1
+    #if model.init_params:
+    #    weight = model.param_init_net.XavierFill(
+    #        [],
+    #        'conv1' + '_w',
+    #        shape=[channels,1,1,5]
+    #    )
+    #    print("initial_conv1_w: " + str(workspace.FetchBlob('conv1_w')))
+    #    bias = model.param_init_net.ConstantFill(
+    #        [],
+    #        'conv1' + '_b',
+    #        shape=[channels, ]
+    #    )
+    #else:
+    #    weight = core.ScopedBlobReference(
+    #        'conv1' + '_w', model.param_init_net)
+    #    bias = core.ScopedBlobReference(
+    #        'conv1' + '_b', model.param_init_net)
 
-    model.params.extend([weight, bias])
-    model.weights.append(weight)
-    model.biases.append(bias)
+    #model.params.extend([weight, bias])
+    #model.weights.append(weight)
+    #model.biases.append(bias)
 
-    conv1 = model.net.Conv([data, weight, bias], 'conv1', dim_in=1, dim_out=channels, kernel_h=1, kernel_w=5)
+    #conv1 = model.net.Conv([data, weight, bias], 'conv1', dim_in=1, dim_out=channels, kernel_h=1, kernel_w=5)
     #conv1 = brew.conv(model, data, 'conv1', 1, 2, 5)
     #pool1 = brew.max_pool(model, conv1, 'pool1', kernel_h=1, kernel_w=2, stride=2)
-    fc3 = brew.fc(model, conv1, 'fc3', dim_in=channels*157, dim_out=100)
+    fc3 = brew.fc(model, data, 'fc3', dim_in=161, dim_out=100, weight_init=('XavierFill', {}), bias_init=('ConstantFill', {}))
     fc3 = brew.relu(model, fc3, fc3)
     pred = brew.fc(model, fc3, 'pred', 100, 10)
+    #print(workspace.FetchBlob('pred_w'))
     softmax = brew.softmax(model, pred, 'softmax')
     return softmax
 
@@ -127,11 +136,12 @@ def AddAccuracy(model, softmax, label):
 
 arg_scope = {"order": "NCHW"}
 train_model = model_helper.ModelHelper(name="event_train", arg_scope=arg_scope)
-train_data, train_labels = train_model.TensorProtosDBInput(
-    [], ["data_float", "label"], batch_size=350, db='event_train1.minidb', db_type='minidb')
+#train_data, train_labels = train_model.TensorProtosDBInput(
+#    [], ["data_float", "label"], batch_size=350, db='event_train1.minidb', db_type='minidb')
 workspace.FeedBlob("TD",train_features.astype(np.float32))
+workspace.FeedBlob("TL", train_labels.astype(np.int32))
 softmax = addModel(train_model, "TD")
-AddTrainingOperators(train_model, softmax, train_labels)
+AddTrainingOperators(train_model, softmax, "TL")
 AddBookkeepingOperators(train_model)
 
 test_model = model_helper.ModelHelper(
@@ -141,14 +151,18 @@ test_features, test_labels = train_model.TensorProtosDBInput(
 softmax = addModel(test_model, test_features)
 AddAccuracy(test_model, softmax, test_labels)
 
-#from IPython import display
-#graph = net_drawer.GetPydotGraph(train_model.net.Proto().op, name="events", rankdir="LR")
-#display.Image(graph.create_png(), width=800)
+from IPython import display
+graph = net_drawer.GetPydotGraph(train_model.net.Proto().op, name="events", rankdir="LR")
+display.Image(graph.create_png(), width=800)
 
 workspace.RunNetOnce(train_model.param_init_net)
 
 workspace.CreateNet(train_model.net, overwrite=True)
 
+print("First Layer Weights: ")
+print(workspace.FetchBlob('fc3_w'))
+print("Param Grad: ")
+print(workspace.FetchBlob('fc3_w_grad'))
 total_iters = 200
 accuracy = np.zeros(total_iters)
 loss = np.zeros(total_iters)
@@ -157,10 +171,13 @@ for i in range(total_iters):
     workspace.RunNet(train_model.net.Proto().name)
     accuracy[i] = workspace.FetchBlob('accuracy')
     loss[i] = workspace.FetchBlob('loss')
-    print("Conv_w: " + str(workspace.FetchBlob('conv1_w')))
-    print("Conv_b: " + str(workspace.FetchBlob('conv1_b')))
+    print("First Layer Weights: ")
+    print(workspace.FetchBlob('fc3_w'))
+    print("Param Grad: ")
+    print(workspace.FetchBlob('fc3_w_grad'))
+    #print("Conv_w: " + str(workspace.FetchBlob('conv1_w')))
+    #print("Conv_b: " + str(workspace.FetchBlob('conv1_b')))
 pyplot.plot(loss, 'b')
 pyplot.plot(accuracy, 'r')
 pyplot.legend(('loss', 'Accuracy'), loc='upper right')
-
 pyplot.show()
