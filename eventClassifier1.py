@@ -5,6 +5,7 @@ from StringIO import StringIO
 from caffe2.python import core, utils, workspace, model_helper, brew, net_drawer
 from caffe2.proto import caffe2_pb2
 import scipy.io
+import os
 
 workspace.ResetWorkspace()
 trainingData = scipy.io.loadmat('trainingData.mat')
@@ -17,20 +18,29 @@ labels = labels.astype(int)
 features = np.delete(features, [141, 363], axis=0)
 labels = np.delete(labels, [141, 363])
 
-random_index = np.random.permutation(442)
+
+random_index = np.random.permutation(len(labels))
 features = features[random_index]
 labels = labels[random_index]
-max = np.amax(features)
-features = features/max
+features = features[:,30:70]
+for i in range(0, 442):
+    min = np.amin(features[i,:])
+    max = np.amax(features[i,:])
+    features[i,:] = (features[i,:] - min)/(max - min)
+#print(np.argmax(features, axis=0))
+#features = np.random.rand(len(labels),40)
 
 train_features = features[:350]
-#train_features = train_features.reshape(350,1,1,161)
+train_features = train_features.reshape(350,1,1,40)
 train_labels = labels[:350]
 test_features = features[350:]
-#test_features = test_features.reshape(94,1,1,161)
+test_features = test_features.reshape(len(labels)-350,1,1,40)
 test_labels = labels[350:]
 
 def write_db(db_type, db_name, features, labels):
+    #remove if db already exists
+    if (os.path.exists(db_name)):
+        os.remove(os.path.join(db_name))
     db = core.C.create_db(db_type, db_name, core.C.Mode.write)
     transaction = db.new_transaction()
     for i in range(features.shape[0]):
@@ -97,35 +107,36 @@ def AddBookkeepingOperators(model):
     # gradients.
 
 def addModel(model, data):
-    #channels = 1
-    #if model.init_params:
-    #    weight = model.param_init_net.XavierFill(
-    #        [],
-    #        'conv1' + '_w',
-    #        shape=[channels,1,1,5]
-    #    )
-    #    print("initial_conv1_w: " + str(workspace.FetchBlob('conv1_w')))
-    #    bias = model.param_init_net.ConstantFill(
-    #        [],
-    #        'conv1' + '_b',
-    #        shape=[channels, ]
-    #    )
-    #else:
-    #    weight = core.ScopedBlobReference(
-    #        'conv1' + '_w', model.param_init_net)
-    #    bias = core.ScopedBlobReference(
-    #        'conv1' + '_b', model.param_init_net)
+    channels = 5
+    kernel_size = 5
+    if model.init_params:
+        weight = model.param_init_net.XavierFill(
+            [],
+            'conv1' + '_w',
+            shape=[channels,1,1,kernel_size]
+        )
+        bias = model.param_init_net.ConstantFill(
+            [],
+            'conv1' + '_b',
+            shape=[channels, ]
+        )
+    else:
+        weight = core.ScopedBlobReference(
+            'conv1' + '_w', model.param_init_net)
+        bias = core.ScopedBlobReference(
+            'conv1' + '_b', model.param_init_net)
 
-    #model.params.extend([weight, bias])
-    #model.weights.append(weight)
-    #model.biases.append(bias)
+    model.params.extend([weight, bias])
+    model.weights.append(weight)
+    model.biases.append(bias)
 
-    #conv1 = model.net.Conv([data, weight, bias], 'conv1', dim_in=1, dim_out=channels, kernel_h=1, kernel_w=5)
+    conv1 = model.net.Conv([data, weight, bias], 'conv1', dim_in=1, dim_out=channels, kernel_h=1, kernel_w=kernel_size)
     #conv1 = brew.conv(model, data, 'conv1', 1, 2, 5)
-    #pool1 = brew.max_pool(model, conv1, 'pool1', kernel_h=1, kernel_w=2, stride=2)
-    fc3 = brew.fc(model, data, 'fc3', dim_in=161, dim_out=100, weight_init=('XavierFill', {}), bias_init=('ConstantFill', {}))
+    pool1 = brew.max_pool(model, conv1, 'pool1', kernel_h=1, kernel_w=2, stride=2)
+    pool_dim_out = (41-kernel_size)/2
+    fc3 = brew.fc(model, pool1, 'fc3', dim_in=pool_dim_out*channels, dim_out=100)
     fc3 = brew.relu(model, fc3, fc3)
-    pred = brew.fc(model, fc3, 'pred', 100, 10)
+    pred = brew.fc(model, fc3, 'pred', 100, 2)
     #print(workspace.FetchBlob('pred_w'))
     softmax = brew.softmax(model, pred, 'softmax')
     return softmax
@@ -134,20 +145,30 @@ def AddAccuracy(model, softmax, label):
     accuracy = model.Accuracy([softmax, label], "accuracy")
     return accuracy
 
+def AddInput(model, batch_size, db, db_type):
+    data_float, label_int = model.TensorProtosDBInput(
+        [], ["data_float", "label_int"], batch_size=batch_size,
+        db=db, db_type=db_type)
+    data = model.Cast(data_float, "data", to=core.DataType.FLOAT)
+    label = model.Cast(label_int, "label", to=core.DataType.INT32)
+    data = model.StopGradient(data, data)
+    return data, label
+
+
 arg_scope = {"order": "NCHW"}
 train_model = model_helper.ModelHelper(name="event_train", arg_scope=arg_scope)
-#train_data, train_labels = train_model.TensorProtosDBInput(
-#    [], ["data_float", "label"], batch_size=350, db='event_train1.minidb', db_type='minidb')
-workspace.FeedBlob("TD",train_features.astype(np.float32))
-workspace.FeedBlob("TL", train_labels.astype(np.int32))
-softmax = addModel(train_model, "TD")
-AddTrainingOperators(train_model, softmax, "TL")
+train_data, train_labels = AddInput(train_model, 20, 'event_train1.minidb', db_type='minidb')
+#workspace.FeedBlob("TD",train_features.astype(np.float32))
+#workspace.FeedBlob("TL", train_labels.astype(np.int32))
+softmax = addModel(train_model, train_data)
+AddTrainingOperators(train_model, softmax, train_labels)
 AddBookkeepingOperators(train_model)
 
 test_model = model_helper.ModelHelper(
     name="event_test", arg_scope=arg_scope, init_params=False)
-test_features, test_labels = train_model.TensorProtosDBInput(
-    [], ["data_float", "label"], batch_size=94, db='event_test1.minidb', db_type='minidb')
+test_features, test_labels = AddInput(test_model, 50, 'event_test1.minidb', db_type='minidb')
+#workspace.FeedBlob("TestD",test_features.astype(np.float32))
+#workspace.FeedBlob("TestL", train_labels.astype(np.int32))
 softmax = addModel(test_model, test_features)
 AddAccuracy(test_model, softmax, test_labels)
 
@@ -158,12 +179,7 @@ display.Image(graph.create_png(), width=800)
 workspace.RunNetOnce(train_model.param_init_net)
 
 workspace.CreateNet(train_model.net, overwrite=True)
-
-print("First Layer Weights: ")
-print(workspace.FetchBlob('fc3_w'))
-print("Param Grad: ")
-print(workspace.FetchBlob('fc3_w_grad'))
-total_iters = 200
+total_iters = 2000
 accuracy = np.zeros(total_iters)
 loss = np.zeros(total_iters)
 
@@ -171,13 +187,42 @@ for i in range(total_iters):
     workspace.RunNet(train_model.net.Proto().name)
     accuracy[i] = workspace.FetchBlob('accuracy')
     loss[i] = workspace.FetchBlob('loss')
-    print("First Layer Weights: ")
-    print(workspace.FetchBlob('fc3_w'))
-    print("Param Grad: ")
-    print(workspace.FetchBlob('fc3_w_grad'))
+    #print("First Layer Weights: ")
+    #print(workspace.FetchBlob('fc3_w'))
+    #print("Param Grad: ")
+    #print(workspace.FetchBlob('fc3_w_grad'))
     #print("Conv_w: " + str(workspace.FetchBlob('conv1_w')))
     #print("Conv_b: " + str(workspace.FetchBlob('conv1_b')))
+
+#print(workspace.FetchBlob(softmax))
 pyplot.plot(loss, 'b')
 pyplot.plot(accuracy, 'r')
 pyplot.legend(('loss', 'Accuracy'), loc='upper right')
 pyplot.show()
+
+# run a test pass on the test net
+workspace.RunNetOnce(test_model.param_init_net)
+workspace.CreateNet(test_model.net)
+test_accuracy = np.zeros(100)
+for i in range(100):
+    workspace.RunNet(test_model.net.Proto().name)
+    test_accuracy[i] = workspace.FetchBlob('accuracy')
+# After the execution is done, let's plot the values
+pyplot.plot(test_accuracy, 'r')
+pyplot.title('Acuracy over test batches.')
+print('test_accuracy: %f' % test_accuracy.mean())
+pyplot.show()
+
+workspace.FeedBlob("Test2", features.reshape(442,1,1,40))
+workspace.FeedBlob("Test2Labels", labels)
+
+deploy_model = model_helper.ModelHelper(name="event_deploy", arg_scope=arg_scope,
+init_params=False)
+softmax = addModel(deploy_model, "Test2")
+output = workspace.FetchBlob(softmax)
+deploy_labels = workspace.FetchBlob("Test2Labels")
+#print(deploy_labels.shape)
+AddAccuracy(deploy_model, softmax, "Test2Labels")
+#print(output.shape)
+#for i in range(0,50):
+#    print(str(np.argmax(output[i])) + ', ' + str(labels[i]))
