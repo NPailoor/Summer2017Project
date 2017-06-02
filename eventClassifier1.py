@@ -9,15 +9,20 @@ import os
 
 workspace.ResetWorkspace()
 trainingData = scipy.io.loadmat('trainingData.mat')
-trainingLabels = scipy.io.loadmat('trainingLabels.mat')
+#trainingLabels = scipy.io.loadmat('trainingLabels.mat')
 # load the features to a feature matrix.
 features = trainingData['sortedmedianTable']
 # load the labels to a feature matrix
-labels = np.reshape(trainingLabels['sortedClassifierOutput'],444)
+#labels = np.reshape(trainingLabels['sortedClassifierOutput'],444)
+labels = np.genfromtxt('revisedLabels.csv', delimiter=',')
 labels = labels.astype(int)
 features = np.delete(features, [141, 363], axis=0)
-labels = np.delete(labels, [141, 363])
-
+deploymentData= scipy.io.loadmat('deployment_test_data.mat')
+deploymentLabels = scipy.io.loadmat('deployment_test_labels.mat')
+dData = deploymentData['medianTable2']
+dLabels = np.reshape(deploymentLabels['classifierOutput'], 3331)
+dLabels = dLabels.astype(np.int32)
+dData = dData.astype(np.float32)
 
 random_index = np.random.permutation(len(labels))
 features = features[random_index]
@@ -30,12 +35,22 @@ for i in range(0, 442):
 #print(np.argmax(features, axis=0))
 #features = np.random.rand(len(labels),40)
 
+random_index = np.random.permutation(len(dLabels))
+dData = dData[random_index]
+dLabels = dLabels[random_index]
+dData = dData[:,30:70]
+for i in range(0,3331):
+    min = np.amin(dData[i,:])
+    max = np.amax(dData[i,:])
+    dData[i,:] = (dData[i,:] - min)/(max - min)
+
 train_features = features[:350]
 train_features = train_features.reshape(350,1,1,40)
 train_labels = labels[:350]
 test_features = features[350:]
 test_features = test_features.reshape(len(labels)-350,1,1,40)
 test_labels = labels[350:]
+dData = dData.reshape(3331,1,1,40)
 
 def write_db(db_type, db_name, features, labels):
     #remove if db already exists
@@ -57,6 +72,7 @@ def write_db(db_type, db_name, features, labels):
 
 write_db("minidb", "event_train1.minidb", train_features, train_labels)
 write_db("minidb", "event_test1.minidb", test_features, test_labels)
+#write_db("minidb", "event_deploy.minidb", dData, dLabels)
 
 def AddTrainingOperators(model, softmax, label):
     # something very important happens here
@@ -107,8 +123,8 @@ def AddBookkeepingOperators(model):
     # gradients.
 
 def addModel(model, data):
-    channels = 5
-    kernel_size = 5
+    channels = 10
+    kernel_size = 3
     if model.init_params:
         weight = model.param_init_net.XavierFill(
             [],
@@ -166,11 +182,13 @@ AddBookkeepingOperators(train_model)
 
 test_model = model_helper.ModelHelper(
     name="event_test", arg_scope=arg_scope, init_params=False)
-test_features, test_labels = AddInput(test_model, 50, 'event_test1.minidb', db_type='minidb')
+test_features, test_labels = AddInput(test_model, 30, 'event_test1.minidb', db_type='minidb')
 #workspace.FeedBlob("TestD",test_features.astype(np.float32))
 #workspace.FeedBlob("TestL", train_labels.astype(np.int32))
 softmax = addModel(test_model, test_features)
 AddAccuracy(test_model, softmax, test_labels)
+
+
 
 from IPython import display
 graph = net_drawer.GetPydotGraph(train_model.net.Proto().op, name="events", rankdir="LR")
@@ -213,16 +231,46 @@ pyplot.title('Acuracy over test batches.')
 print('test_accuracy: %f' % test_accuracy.mean())
 pyplot.show()
 
-workspace.FeedBlob("Test2", features.reshape(442,1,1,40))
-workspace.FeedBlob("Test2Labels", labels)
+workspace.FeedBlob("Test2", dData)
+workspace.FeedBlob("Test2Labels", dLabels)
 
 deploy_model = model_helper.ModelHelper(name="event_deploy", arg_scope=arg_scope,
 init_params=False)
-softmax = addModel(deploy_model, "Test2")
-output = workspace.FetchBlob(softmax)
+softmax2 = addModel(deploy_model, "Test2")
 deploy_labels = workspace.FetchBlob("Test2Labels")
-#print(deploy_labels.shape)
-AddAccuracy(deploy_model, softmax, "Test2Labels")
-#print(output.shape)
+AddAccuracy(deploy_model, softmax2, "Test2Labels")
+
+workspace.CreateNet(deploy_model.net)
+workspace.RunNet(deploy_model.net.Proto().name)
+print('deploy_accuracy: %f' % workspace.FetchBlob('accuracy'))
+output = workspace.FetchBlob(softmax2)
+output = np.rint(output)
+false_positives = 0
+false_negatives = 0
+true_positives = 0
+true_negatives = 0
+print(output)
+for i in range(0, len(deploy_labels)):
+    if deploy_labels[i] == 0:
+        if output[i,0] == 1:
+            true_negatives = true_negatives + 1
+        else:
+            false_positives = false_positives + 1
+    else:
+        if output[i,0] == 1:
+            false_negatives = false_negatives + 1
+        else:
+            true_positives = true_positives + 1
+
+print('False positives: ' + str(false_positives))
+print('False negatives: ' + str(false_negatives))
+print('True positives: ' + str(true_positives))
+print('True negatives: ' + str(true_negatives))
+
+discoveredIndices = np.where(output[:,1] == 1)[0]
+discoveredEvents = dData[discoveredIndices,:]
+discoveredEvents = np.squeeze(discoveredEvents)
+np.savetxt('potentialEvents.csv', discoveredEvents, delimiter=',')
+
 #for i in range(0,50):
 #    print(str(np.argmax(output[i])) + ', ' + str(labels[i]))
