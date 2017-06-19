@@ -4,53 +4,71 @@ from matplotlib import pyplot
 from StringIO import StringIO
 from caffe2.python import core, utils, workspace, model_helper, brew, net_drawer
 from caffe2.proto import caffe2_pb2
+import caffe2.python.predictor.mobile_exporter
 import scipy.io
 import os
+import copy
 
 workspace.ResetWorkspace()
 trainingData = scipy.io.loadmat('trainingData.mat')
 #trainingLabels = scipy.io.loadmat('trainingLabels.mat')
 # load the features to a feature matrix.
 features = trainingData['sortedmedianTable']
+features2 = np.genfromtxt('EventTable.csv', delimiter=',')
+features2 = features2[0:925]
 # load the labels to a feature matrix
 #labels = np.reshape(trainingLabels['sortedClassifierOutput'],444)
 labels = np.genfromtxt('revisedLabels.csv', delimiter=',')
 labels = labels.astype(int)
 features = np.delete(features, [141, 363], axis=0)
-deploymentData= scipy.io.loadmat('deployment_test_data.mat')
-deploymentLabels = scipy.io.loadmat('deployment_test_labels.mat')
-dData = deploymentData['medianTable2']
-dLabels = np.reshape(deploymentLabels['classifierOutput'], 3331)
+labels2 = np.genfromtxt('EventsLabeled.csv', delimiter=',')
+labels2 = labels2.astype(int)
+features = features[:,30:70]
+for i in range(0, len(labels)):
+    min = np.amin(features[i,:])
+    max = np.amax(features[i,:])
+    features[i,:] = (features[i,:] - min)/(max - min)
+features = np.append(features, features2,axis=0)
+labels = np.append(labels, labels2)
+#deploymentData= scipy.io.loadmat('deployment_test_data.mat')
+#deploymentLabels = scipy.io.loadmat('deployment_test_labels.mat')
+#dData = deploymentData['medianTable2']
+#dLabels = np.reshape(deploymentLabels['classifierOutput'], 3331)
+eventLabels = np.genfromtxt('potentialEventsRelabeled.csv', delimiter=',')
+eventData = np.genfromtxt('potentialEvents.csv', delimiter=',')
+nonEventLabels = np.genfromtxt('nonEventLabels.csv', delimiter=',')
+nonEventData = np.genfromtxt('nonEvents.csv', delimiter=',')
+dLabels = np.append(eventLabels,nonEventLabels)
+dData = np.append(eventData,nonEventData,axis=0)
+#features = np.append(features, eventData,axis=0)
+#labels = np.append(labels, eventLabels)
+print(features.shape)
 dLabels = dLabels.astype(np.int32)
 dData = dData.astype(np.float32)
 
 random_index = np.random.permutation(len(labels))
 features = features[random_index]
 labels = labels[random_index]
-features = features[:,30:70]
-for i in range(0, 442):
-    min = np.amin(features[i,:])
-    max = np.amax(features[i,:])
-    features[i,:] = (features[i,:] - min)/(max - min)
 #print(np.argmax(features, axis=0))
 #features = np.random.rand(len(labels),40)
 
 random_index = np.random.permutation(len(dLabels))
 dData = dData[random_index]
 dLabels = dLabels[random_index]
+dDataBig = copy.deepcopy(dData)
 dData = dData[:,30:70]
-for i in range(0,3331):
+for i in range(0,len(dLabels)):
     min = np.amin(dData[i,:])
     max = np.amax(dData[i,:])
     dData[i,:] = (dData[i,:] - min)/(max - min)
 
-train_features = features[:350]
-train_features = train_features.reshape(350,1,1,40)
-train_labels = labels[:350]
-test_features = features[350:]
-test_features = test_features.reshape(len(labels)-350,1,1,40)
-test_labels = labels[350:]
-dData = dData.reshape(3331,1,1,40)
+train_features = features[:len(labels)/2]
+train_features = train_features.reshape(len(labels)/2,1,1,40)
+train_labels = labels[:len(labels)/2]
+test_features = features[len(labels)/2:]
+test_features = test_features.reshape(len(labels)-len(labels)/2,1,1,40)
+test_labels = labels[len(labels)/2:]
+dData = dData.reshape(len(dLabels),1,1,40)
 
 def write_db(db_type, db_name, features, labels):
     #remove if db already exists
@@ -96,8 +114,6 @@ def AddTrainingOperators(model, softmax, label):
         # Note how we get the gradient of each parameter - ModelHelper keeps
         # track of that.
         param_grad = model.param_to_grad[param]
-        #print(param)
-        #print(workspace.FetchBlob(param))
         # The update is a simple weighted sum: param = param + param_grad * LR
         model.WeightedSum([param, ONE, param_grad, LR], param)
     # let's checkpoint every 20 iterations, which should probably be fine.
@@ -123,8 +139,9 @@ def AddBookkeepingOperators(model):
     # gradients.
 
 def addModel(model, data):
-    channels = 10
-    kernel_size = 3
+    channels = 40
+    channels2 = 100
+    kernel_size = 5
     if model.init_params:
         weight = model.param_init_net.XavierFill(
             [],
@@ -150,9 +167,32 @@ def addModel(model, data):
     #conv1 = brew.conv(model, data, 'conv1', 1, 2, 5)
     pool1 = brew.max_pool(model, conv1, 'pool1', kernel_h=1, kernel_w=2, stride=2)
     pool_dim_out = (41-kernel_size)/2
-    fc3 = brew.fc(model, pool1, 'fc3', dim_in=pool_dim_out*channels, dim_out=100)
+    if model.init_params:
+        weight2 = model.param_init_net.XavierFill(
+            [],
+            'conv2' + '_w',
+            shape=[channels2,channels,1,kernel_size]
+        )
+        bias2 = model.param_init_net.ConstantFill(
+            [],
+            'conv2' + '_b',
+            shape=[channels2, ]
+        )
+    else:
+        weight2 = core.ScopedBlobReference(
+            'conv2' + '_w', model.param_init_net)
+        bias2 = core.ScopedBlobReference(
+            'conv2' + '_b', model.param_init_net)
+
+    model.params.extend([weight2, bias2])
+    model.weights.append(weight2)
+    model.biases.append(bias2)
+    conv2 = model.net.Conv([pool1, weight2, bias2], 'conv2', dim_in=channels, dim_out=channels2, kernel_h=1, kernel_w=kernel_size)
+    pool2 = brew.max_pool(model, conv2, 'pool2', kernel_h=1, kernel_w=2, stride=2)
+    pool_dim_out_2 = (pool_dim_out + 1 - kernel_size)/2
+    fc3 = brew.fc(model, pool2, 'fc3', dim_in=pool_dim_out_2*channels2, dim_out=1000)
     fc3 = brew.relu(model, fc3, fc3)
-    pred = brew.fc(model, fc3, 'pred', 100, 2)
+    pred = brew.fc(model, fc3, 'pred', 1000, 2)
     #print(workspace.FetchBlob('pred_w'))
     softmax = brew.softmax(model, pred, 'softmax')
     return softmax
@@ -197,7 +237,7 @@ display.Image(graph.create_png(), width=800)
 workspace.RunNetOnce(train_model.param_init_net)
 
 workspace.CreateNet(train_model.net, overwrite=True)
-total_iters = 2000
+total_iters = 1000
 accuracy = np.zeros(total_iters)
 loss = np.zeros(total_iters)
 
@@ -234,9 +274,15 @@ pyplot.show()
 workspace.FeedBlob("Test2", dData)
 workspace.FeedBlob("Test2Labels", dLabels)
 
+
 deploy_model = model_helper.ModelHelper(name="event_deploy", arg_scope=arg_scope,
 init_params=False)
 softmax2 = addModel(deploy_model, "Test2")
+init_net, predict_net = caffe2.python.predictor.mobile_exporter.Export(workspace, deploy_model.net, deploy_model.params)
+with open(os.path.join("init_net.pb"), 'wb') as fid:
+    fid.write(init_net.SerializeToString())
+with open(os.path.join("predict_net.pb"), 'wb') as fid:
+    fid.write(predict_net.SerializeToString())
 deploy_labels = workspace.FetchBlob("Test2Labels")
 AddAccuracy(deploy_model, softmax2, "Test2Labels")
 
@@ -267,10 +313,12 @@ print('False negatives: ' + str(false_negatives))
 print('True positives: ' + str(true_positives))
 print('True negatives: ' + str(true_negatives))
 
-discoveredIndices = np.where(output[:,1] == 1)[0]
-discoveredEvents = dData[discoveredIndices,:]
-discoveredEvents = np.squeeze(discoveredEvents)
-np.savetxt('potentialEvents.csv', discoveredEvents, delimiter=',')
+#discoveredIndices = np.where(output[:,0] == 1)[0]
+#discoveredNonEvents = dDataBig[discoveredIndices,:]
+#print(discoveredNonEvents.shape)
+#pELabels = dLabels[discoveredIndices]
+#np.savetxt('nonEvents.csv', discoveredNonEvents, delimiter=',')
+#np.savetxt('nonEventLabels.csv', pELabels, delimiter=',')
 
 #for i in range(0,50):
 #    print(str(np.argmax(output[i])) + ', ' + str(labels[i]))
