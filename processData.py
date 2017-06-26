@@ -18,8 +18,8 @@ def initialFiltering():
     for row in data:
         tag = row[8]
         #Parse AMP string values back into an array
-        ampString = row[0]
-        ampFloat = parseAmp(ampString)
+        ampBytes = row[0]
+        ampFloat = parseAmp(ampBytes)
         
         #Convert values to log scale
         ampLog = numpy.log10(ampFloat)
@@ -130,11 +130,8 @@ def createEventTable():
     numpy.savetxt("EventTable2.csv", eventTable, delimiter =",")
     print(eventTable.shape)
 
-def parseAmp(ampString):
-    splitString = ampString.split('-')
-    ampData = []
-    for i in range(0,len(splitString)-1):
-        ampData.append(float(splitString[i]))
+def parseAmp(ampBytes):
+    ampData = numpy.frombuffer(ampBytes[0][0], dtype = numpy.float32)
     return ampData
 
 def medianAmp(ampLog):
