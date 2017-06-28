@@ -33,32 +33,29 @@ def findData(event):
                                         dir = 'NS'
                                 else:
                                         dir = 'EW'
+                                primeKey = str(int(location)) + str(dateTime) + str(sites[i][0][0]) + str(transmitters[i][0][0]) + dir
                                 fullData = scipy.io.loadmat(filePath, variable_names='data')
                                 fullData = fullData['data']
                                 #Unique identifying tags
-                                primeKey = str(int(location)) + str(dateTime) + str(sites[i][0][0]) + str(transmitters[i][0][0]) + dir
                                 #Matlab is causing this list to be structured as a list of single-element lists
                                 #Needs to be reformatted
                                 dataSample = fullData[start:end]
                                 dataRow = []
                                 #Some datasets contain null elements, if this is the case ignore them
                                 dataIsReal = True
-                                dataString = ""
-                                delim = '-'
-                                #Converting to string
+                                dataSample = numpy.squeeze(dataSample.astype(numpy.float32))
+                                dataSample = numpy.asarray(dataSample)
+                                dataBytes = dataSample.tobytes()
+                                print primeKey
+                                #dataString = ""
+                                #delim = '-'
+                                #Check if nan
                                 for j in range(0, dataSample.size):
                                         if numpy.isnan(dataSample[j]):
                                                 dataIsReal = False
-                                        dataString = dataString + str(dataSample[j][0]) + delim
-                                print "INSERT INTO DATATABLE (AMP,REC,TRAN,DATE,TIME,LAT,LONG,PEAK,TAG,DIR) \
-                                        VALUES ('" + dataString + "','" + str(sites[i][0][0]) + "','" + str(transmitters[i][0][0]) \
-                                        + "','" + str(date) + "'," + str(time) + "," + \
-                                        str(info[7]) + "," + str(info[8]) + "," + str(info[9]) + ",'" + primeKey + "','" + dir + "')"
                                 if dataIsReal:
-                                        conn.execute("INSERT INTO DATATABLE (AMP,REC,TRAN,DATE,TIME,LAT,LONG,PEAK, TAG,DIR) \
-                                                VALUES ('" + dataString + "','" + str(sites[i][0][0]) + "','" + str(transmitters[i][0][0]) \
-                                                + "','" + str(date) + "'," + str(time) + "," + \
-                                                     str(info[7]) + "," + str(info[8]) + "," + str(info[9]) + ",'" + primeKey + "','" + dir +"')");
+                                        conn.execute("INSERT INTO DATATABLE (AMP,REC,TRAN,DATE,TIME,LAT,LONG,PEAK,TAG,DIR) \
+                                        VALUES (?,?,?,?,?,?,?,?,?,?)",(sqlite3.Binary(dataBytes),str(sites[i][0][0]),str(transmitters[i][0][0]),str(date), str(time),str(info[7]),str(info[8]),str(info[9]),primeKey,dir));
                                         conn.commit()
                                         print "Records created successfully"
                                 else:
@@ -66,15 +63,21 @@ def findData(event):
                         else:
                                 print filePath
                                 print "File Does Not Exist"
+        conn.close()
+                
 
 def lightningScan():
         import os
         import scipy.io
         filePath = '/home/nikhil/Desktop/geniza/Morris/EventsEF'
+        date = 20160911
         for dirname in os.listdir(filePath):
-                for filename in os.listdir(filePath + '/' + dirname):
-                        event = scipy.io.loadmat(filePath + '/' + dirname + '/' + filename)
-                        findData(event)
+                dateString = dirname[0:4] + dirname[5:7] + dirname[8:10]
+                if (int(dateString) < date):
+                        print "starting search"
+                        for filename in os.listdir(filePath + '/' + dirname):
+                                event = scipy.io.loadmat(filePath + '/' + dirname + '/' + filename)
+                                findData(event)
                         
 def createTables():
 	import sqlite3

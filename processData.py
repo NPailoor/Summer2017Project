@@ -131,7 +131,7 @@ def createEventTable():
     print(eventTable.shape)
 
 def parseAmp(ampBytes):
-    ampData = numpy.frombuffer(ampBytes[0][0], dtype = numpy.float32)
+    ampData = numpy.frombuffer(ampBytes, dtype = numpy.float32)
     return ampData
 
 def medianAmp(ampLog):
