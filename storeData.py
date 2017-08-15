@@ -27,7 +27,7 @@ def findData(event):
 	for i in range(0, sites.size):
                 #FilePath can end in 0 or 1
                 for k in range(0,2):
-                        filePath = ('/home/nikhil/Desktop/geniza/NarrowbandFull/' + sites[i][0][0] + '/' + str(int(year)) + '_' + str(int(month)).zfill(2) + '_' + str(int(day)).zfill(2) + '/' + tags[i][0][0] +  transmitters[i][0][0] + '_00' + str(k) + 'A.mat')
+                        filePath = ('/home/nikhil/Desktop/geniza/NarrowbandOldFull/' + sites[i][0][0] + '/' + str(int(year)) + '_' + str(int(month)).zfill(2) + '_' + str(int(day)).zfill(2) + '/' + tags[i][0][0] +  transmitters[i][0][0] + '_00' + str(k) + 'A.mat')
                         if os.path.isfile(filePath):
                                 if (k == 0):
                                         dir = 'NS'
@@ -55,7 +55,7 @@ def findData(event):
                                                 dataIsReal = False
                                 if dataIsReal:
                                         conn.execute("INSERT INTO DATATABLE (AMP,REC,TRAN,DATE,TIME,LAT,LONG,PEAK,TAG,DIR) \
-                                        VALUES (?,?,?,?,?,?,?,?,?,?)",(sqlite3.Binary(dataBytes),str(sites[i][0][0]),str(transmitters[i][0][0]),str(date), str(time),str(info[7]),str(info[8]),str(info[9]),primeKey,dir));
+                                        VALUES (?,?,?,?,?,?,?,?,?,?)",(sqlite3.Binary(dataBytes),str(sites[i][0][0]),str(transmitters[i][0][0]),str(date), str(time),str(info[6]),str(info[7]),str(info[8]),primeKey,dir));
                                         conn.commit()
                                         print "Records created successfully"
                                 else:
@@ -70,12 +70,12 @@ def lightningScan():
         import os
         import scipy.io
         filePath = '/home/nikhil/Desktop/geniza/Morris/EventsEF'
-        date = 20160911
+        date = 20110807
         for dirname in os.listdir(filePath):
                 dateString = dirname[0:4] + dirname[5:7] + dirname[8:10]
                 if (int(dateString) < date):
-                        print "starting search"
                         for filename in os.listdir(filePath + '/' + dirname):
+                                print "Accessing file " + dirname + '/' + filename
                                 event = scipy.io.loadmat(filePath + '/' + dirname + '/' + filename)
                                 findData(event)
                         

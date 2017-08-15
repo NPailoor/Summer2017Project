@@ -15,7 +15,7 @@ trainingData = scipy.io.loadmat('trainingData.mat')
 # load the features to a feature matrix.
 features = trainingData['sortedmedianTable']
 features2 = np.genfromtxt('EventTable.csv', delimiter=',')
-features2 = features2[0:925]
+features2 = features2[0:1000]
 # load the labels to a feature matrix
 #labels = np.reshape(trainingLabels['sortedClassifierOutput'],444)
 labels = np.genfromtxt('revisedLabels.csv', delimiter=',')
@@ -139,9 +139,9 @@ def AddBookkeepingOperators(model):
     # gradients.
 
 def addModel(model, data):
-    channels = 40
-    channels2 = 100
-    kernel_size = 5
+    channels = 50
+    channels2 = 200
+    kernel_size = 3
     if model.init_params:
         weight = model.param_init_net.XavierFill(
             [],

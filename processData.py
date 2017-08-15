@@ -26,14 +26,11 @@ def initialFiltering():
         ampLog = numpy.log10(ampFloat)
         #Apply median filter
         ampMedian = medianAmp(ampLog)
-        #Normalize with respect to a steady-state
+        #Normalize between 0 and 1
         ampNormalized = normalizedAmp(ampMedian)
         #Select narrower range of -10:30
         ampNarrowSample = ampNormalized[30:70]
         #normalize between 0 and 1
-        min = numpy.amin(ampNarrowSample)
-        max = numpy.amax(ampNarrowSample)
-        ampFeatures = (ampNarrowSample - min)/(max - min)
         ampFeatures = ampFeatures.astype(numpy.float32)
         ampFeatures = ampFeatures.reshape(1,1,1,40)
         result = p.run([ampFeatures])
@@ -197,7 +194,7 @@ def fixCoordinates():
                 info = info[0]
                 lat = info[6]
                 lon = info[7]
-                peak = info[9]
+                peak = info[8]
                 cursor.execute('''UPDATE DATATABLE SET LAT=?, LONG=?, PEAK=? WHERE TAG=?''',\
                                (lat, lon, peak, tag))
                 print("Table updated successfully")
@@ -214,8 +211,9 @@ def fixCoordinates():
 
 def normalizedAmp(ampMedian):
     #timeRange = list(range(-40,120))
-    steadyState = numpy.median(ampMedian[20:40])
-    ampNormalized = ampMedian / steadyState
+    min = numpy.amin(ampMedian)
+    max = numpy.amax(ampMedian)
+    ampNormalized = (ampMedian - min)/(max - min)
     #p.subplot(211)
     #p.plot(timeRange, ampMedian)
     #p.subplot(212)
@@ -232,18 +230,23 @@ def selectSample(tag):
 
 def dataTest(tag):
     dataRaw = parseAmp(selectSample(tag))
+    dataRaw = dataRaw[30:70]
     dataLog = numpy.log10(dataRaw)
     dataMedian = medianAmp(dataLog)
     dataNormal = normalizedAmp(dataMedian)
-    timeRange = list(range(-40,120))
+    timeRange = list(range(-10,30))
     p.subplot(411)
     p.plot(timeRange, dataRaw)
-    p.subplot(412)
+    p.title('Raw data')
+    p.subplot(412)	
     p.plot(timeRange, dataLog)
+    p.title('Log scale raw data')
     p.subplot(413)
     p.plot(timeRange, dataMedian)
+    p.title('Median filtered log scale data')
     p.subplot(414)
     p.plot(timeRange, dataNormal)
+    p.title('Fully normalized data')
     p.show()
 
 def distance(lat1, long1, lat2, long2):
